@@ -7,7 +7,7 @@ edition = "2021"
 [dependencies]
 interchange = "0.2.0"
 log = { version = "0.4.14", default-features = false }
-trussed = { version = "0.1", features = ["log-all", "virt"] }
+trussed = { version = "0.1", features = ["virt"] }
 usb-device = { version = "0.2.7", default-features = false }
 usbip-device = "0.1.5"
 
@@ -24,7 +24,6 @@ clap = { version = "3.0.0", features = ["derive"] }
 clap-num = "1.0.0"
 delog = { version = "0.1.6", features = ["std-log"] }
 pretty_env_logger = "0.4.0"
-trussed = { version = "0.1", features = ["clients-3"] }
 
 # applications
 admin-app = { version = "0.1", features = ["log-all"] }
@@ -40,4 +39,11 @@ name = "fido"
 required-features = ["ctaphid"]
 
 [patch.crates-io]
-trussed = { git = "https://github.com/trussed-dev/trussed", rev = "84219ec991a7ea942faabe8fd2b862f827367762" }
+apdu-dispatch = { git = "https://github.com/robin-nitrokey/apdu-dispatch", rev = "38ee087ce5110c4c85ca87a2de36df2b89ca2144" }
+ctaphid-dispatch = { git = " https://github.com/robin-nitrokey/ctaphid-dispatch", rev = "15ea9ab3af7e84fdebfba0324c283bcb8fa31aa7" }
+interchange = { git = "https://github.com/sosthene-nitrokey/interchange", rev = "dcafab8d46e7dcd1210e3d45a6250b57d5b20aed" }
+trussed = { git = "https://github.com/robin-nitrokey/trussed", rev = "bd18de095cb37d7a686c257823c3bae93a960b69" }
+
+[patch."https://github.com/Nitrokey/nitrokey-3-firmware"]
+usbd-ccid = { git = "https://github.com/robin-nitrokey/solo2", rev = "d8e343fc4a472fdd241045a30544c669f841b98c" }
+usbd-ctaphid = { git = "https://github.com/robin-nitrokey/solo2", rev = "d8e343fc4a472fdd241045a30544c669f841b98c" }

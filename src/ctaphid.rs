@@ -1,10 +1,16 @@
-use ctaphid_dispatch::{dispatch::Dispatch, types::HidInterchange};
-use interchange::Interchange as _;
+use ctaphid_dispatch::{
+    dispatch::Dispatch,
+    types::{Request, Response},
+};
+use interchange::Channel;
 use usb_device::bus::{UsbBus, UsbBusAllocator};
 use usbd_ctaphid::CtapHid;
 
-pub fn setup<B: UsbBus>(bus_allocator: &UsbBusAllocator<B>) -> (CtapHid<'_, B>, Dispatch) {
-    let (ctaphid_rq, ctaphid_rp) = HidInterchange::claim().unwrap();
+pub fn setup<'a, B: UsbBus>(
+    bus_allocator: &'a UsbBusAllocator<B>,
+    channel: &'a Channel<Request, Response>,
+) -> (CtapHid<'a, B>, Dispatch<'a>) {
+    let (ctaphid_rq, ctaphid_rp) = channel.split().unwrap();
     let ctaphid = CtapHid::new(bus_allocator, ctaphid_rq, 0u32)
         .implements_ctap1()
         .implements_ctap2()

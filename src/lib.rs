@@ -5,7 +5,10 @@ mod ctaphid;
 
 use std::{cell::RefCell, rc::Rc, thread, time::Duration};
 
+use interchange::{Channel, Interchange};
 use trussed::{
+    api::{Reply, Request},
+    error::Error,
     virt::{self, Platform, StoreProvider},
     ClientImplementation, Service,
 };
@@ -15,7 +18,8 @@ use usb_device::{
 };
 use usbip_device::UsbIpBus;
 
-pub type Client<S> = ClientImplementation<Syscall<Platform<S>>>;
+pub type Client<'a, S, B, Bs, const CLIENT_COUNT: usize> =
+    ClientImplementation<'a, B, Syscall<Service<'a, Platform<S>, Bs, CLIENT_COUNT>>>;
 
 pub struct Options {
     pub manufacturer: Option<String>,
@@ -47,18 +51,20 @@ pub trait Apps<C: trussed::Client, D> {
     ) -> T;
 }
 
-pub struct Runner<S: StoreProvider> {
+pub struct Runner<S: StoreProvider, const CLIENT_COUNT: usize> {
     store: S,
     options: Options,
     init_platform: Option<Box<dyn Fn(&mut Platform<S>)>>,
+    interchanges: Interchanges<CLIENT_COUNT>,
 }
 
-impl<S: StoreProvider + Clone> Runner<S> {
+impl<S: StoreProvider + Clone, const CLIENT_COUNT: usize> Runner<S, CLIENT_COUNT> {
     pub fn new(store: S, options: Options) -> Self {
         Self {
             store,
             options,
             init_platform: Default::default(),
+            interchanges: Interchanges::new(),
         }
     }
 
@@ -70,7 +76,12 @@ impl<S: StoreProvider + Clone> Runner<S> {
         self
     }
 
-    pub fn exec<A: Apps<Client<S>, D>, D, F: Fn(&mut Platform<S>) -> D>(&self, make_data: F) {
+    pub fn exec<'a, A, D, F>(&'a mut self, make_data: F)
+    where
+        A: Apps<Client<'a, S, (), (), CLIENT_COUNT>, D>,
+        F: Fn(&mut Platform<S>) -> D,
+    {
+        self.interchanges = Interchanges::new();
         virt::with_platform(self.store.clone(), |mut platform| {
             if let Some(init_platform) = &self.init_platform {
                 init_platform(&mut platform);
@@ -81,13 +92,22 @@ impl<S: StoreProvider + Clone> Runner<S> {
             let bus_allocator = UsbBusAllocator::new(UsbIpBus::new());
 
             #[cfg(feature = "ctaphid")]
-            let (mut ctaphid, mut ctaphid_dispatch) = ctaphid::setup(&bus_allocator);
+            let (mut ctaphid, mut ctaphid_dispatch) =
+                ctaphid::setup(&bus_allocator, &self.interchanges.ctaphid);
 
             #[cfg(feature = "ccid")]
-            let (mut ccid, mut apdu_dispatch) = ccid::setup(&bus_allocator);
+            let (mut ccid, mut apdu_dispatch) = ccid::setup(
+                &bus_allocator,
+                &self.interchanges.ccid_contact,
+                &self.interchanges.ccid_contactless,
+            );
 
             let mut usb_device = build_device(&bus_allocator, &self.options);
-            let service = Rc::new(RefCell::new(Service::new(platform)));
+            let service = Rc::new(RefCell::new(Service::with_backends(
+                platform,
+                &self.interchanges.trussed,
+                (),
+            )));
             let syscall = Syscall::from(service.clone());
             let mut apps = A::new(
                 |id| {
@@ -139,18 +159,44 @@ fn build_device<'a, B: UsbBus>(
     usb_builder.device_class(0x03).device_sub_class(0).build()
 }
 
-pub struct Syscall<P: trussed::Platform> {
-    service: Rc<RefCell<Service<P>>>,
+struct Interchanges<const CLIENT_COUNT: usize> {
+    trussed: Interchange<Request<()>, Result<Reply, Error>, CLIENT_COUNT>,
+    #[cfg(feature = "ccid")]
+    ccid_contact: Channel<apdu_dispatch::Data, apdu_dispatch::Data>,
+    #[cfg(feature = "ccid")]
+    ccid_contactless: Channel<apdu_dispatch::Data, apdu_dispatch::Data>,
+    #[cfg(feature = "ctaphid")]
+    ctaphid: Channel<ctaphid_dispatch::types::Request, ctaphid_dispatch::types::Response>,
 }
 
-impl<P: trussed::Platform> trussed::client::Syscall for Syscall<P> {
+impl<const CLIENT_COUNT: usize> Interchanges<CLIENT_COUNT> {
+    fn new() -> Self {
+        Self {
+            trussed: Interchange::new(),
+            #[cfg(feature = "ccid")]
+            ccid_contact: Channel::new(),
+            #[cfg(feature = "ccid")]
+            ccid_contactless: Channel::new(),
+            #[cfg(feature = "ctaphid")]
+            ctaphid: Channel::new(),
+        }
+    }
+}
+
+pub struct Syscall<T> {
+    service: Rc<RefCell<T>>,
+}
+
+impl<'a, P: trussed::Platform, const CLIENT_COUNT: usize> trussed::client::Syscall
+    for Syscall<Service<'a, P, (), CLIENT_COUNT>>
+{
     fn syscall(&mut self) {
         log::debug!("syscall");
         self.service.borrow_mut().process();
     }
 }
 
-impl<P: trussed::Platform> Clone for Syscall<P> {
+impl<T> Clone for Syscall<T> {
     fn clone(&self) -> Self {
         Self {
             service: self.service.clone(),
@@ -158,8 +204,8 @@ impl<P: trussed::Platform> Clone for Syscall<P> {
     }
 }
 
-impl<P: trussed::Platform> From<Rc<RefCell<Service<P>>>> for Syscall<P> {
-    fn from(service: Rc<RefCell<Service<P>>>) -> Self {
+impl<T> From<Rc<RefCell<T>>> for Syscall<T> {
+    fn from(service: Rc<RefCell<T>>) -> Self {
         Self { service }
     }
 }
